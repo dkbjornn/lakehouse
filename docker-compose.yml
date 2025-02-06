@@ -1,0 +1,67 @@
+version: "3"
+
+services:
+  # Nessie Catalog Server Using In-Memory Store
+  nessie:
+    image: projectnessie/nessie:latest
+    container_name: nessie
+    networks: 
+      - iceberg
+    ports:
+      - 19120:19120
+  # MinIO Storage Server
+  ## Creates two buckets named lakehouse and lake
+  ## tail -f /dev/null is to keep the container running
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+    networks:
+      - iceberg
+    ports:
+      - 9001:9001
+      - 9000:9000
+    command: ["server", "/data", "--console-address", ":9001"]
+    entrypoint: >
+      /bin/sh -c "
+      minio server /data --console-address ':9001' &
+      sleep 5 &&
+      mc alias set myminio http://localhost:9000 admin password &&
+      mc mb myminio/lakehouse &&
+      mc mb myminio/lake &&
+      tail -f /dev/null
+      "
+  dremio:
+    platform: linux/x86_64
+    image: dremio/dremio-oss:latest
+    ports:
+      - 9047:9047
+      - 31010:31010
+      - 32010:32010
+    container_name: dremio
+    environment:
+      - DREMIO_JAVA_SERVER_EXTRA_OPTS=-Dpaths.dist=file:///opt/dremio/data/dist
+    networks:
+      - iceberg
+  prefect:
+    image: prefecthq/prefect:3.1.16.dev3-python3.11-conda
+    restart: always
+    volumes:
+      - prefect-data:/data
+      - .:/app
+    environment:
+      PREFECT_HOME: /data
+    command: prefect server start --host 0.0.0.0
+    container_name: prefect
+    depends_on:
+      - dremio
+    ports:
+      - 4200:4200
+    networks:
+      - iceberg
+networks:
+  iceberg:
+volumes:
+  prefect-data: {}
